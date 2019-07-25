@@ -112,9 +112,9 @@ The context includes "clientlocationclinic", the context information will be inc
 
 Client sends http post request to api/authoriazation to obtain an access token. The request header of this request must contain the following fields:
 
--`grant-type `: client_credentials
--`client-assertion-type`: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
--`client-assertion`: client claim token (jwt format)
+- `grant-type `: client_credentials
+- `client-assertion-type`: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+- `client-assertion`: client claim token (jwt format)
 
 Below shows an example of the claim token from client:  
 
@@ -249,3 +249,4 @@ The RS verifies the signature of  the token, validiates the token content and th
    [PlGa]: <https://github.com/RahulHP/dillinger/blob/master/plugins/googleanalytics/README.md>
    [Postman]: <https://www.getpostman.com/>
  
+
