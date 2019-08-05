@@ -5,7 +5,6 @@ The proposed context-aware OAuth protocol has been implemented and can be found 
 
   - Athorization Server
   - Resource Server
-  - Environmental situation oracles (ESO)
   
 Note that we use http as communication protocol in the implementation. 
 
