@@ -24,88 +24,106 @@ The implementation uses a number of open source projects/libraries to work prope
 
 
 ## Authorization Server 
-The authorization server is implemented as a node.js server, listened on port 5000 in the local computer. The implementation of AS includes four sub modules, policy engine, secure virtual resource, token generator and policy manager. 
-  - **Policy engine**:  Grant or deny the request based on policies. 
-  - **Secure virtual resourse**: Securely storing the polices and client's credentials.
-  - **Token generator**: Generating the token once the request is permitted by policy engine.
-  - **Policy manager**: Interface for Resource Owner to manage the policies at any time.
-  
-Two APIs are implemented on the AS,api/authorization and api/policy. 
+The authorization server is implemented as a node.js server, listened on port 5000 in the local computer. The AS provides the authorization and token generation service. We implement ABAC model for authorization and JSON web token for access token.  AS includes four endpoints, policy decision point (PDP),  policy administration point (PAP), policy information point (PIP) to control access. Once request is permitted, AS will invoke the token service to generate an access token. 
 
-### Policy 
+  - `policy decision point (PDP)`:  Grant or deny the request based on attributes possessed by the requester. 
+  - `policy administration point (PAP)`: Interface for creating, managing and storing the policies. 
+  - `policy information point (PIP)`: Provides the attribute data required for policy evaluation. 
+  - `token service`: Create a jwt token which contains sufficient information of the authorization. 
 
-This policies are accessed and managed through api/policy.  Three http request method are supported: 
+
+### Policy Language Model 
+
+The policy should conform the following model: 
+
+\<`Policy`> ::=\<`Rule`> | \<`Rule`> \<`Policy`>
+
+\<`Rule`>::= \<`SubjectAttributes`>\<`ObjectAttributes`>\<`Authorization`>\<`Obligation`>\<`EnvironmentContext`>\<`Default`> 
+
+The `Policy` consists of a set of `Rules`. A `Rule` must have the following form: 
+
+- `SubjectAttributes`: Attributes of the subject.
+- `ObjectAttributes`: Attributes of the object. 
+- `Authorization`: The result of policy evaluation.
+- `Obligation`: `Obligation`  specifies the permission and the authorization conditions associated with the permission.  The authorization conditions should be performed by the policy enforcement point  in conjunction with the enforcement of an authorization decision. 
+- `EnvironmentContext` (optional): The external context to be evaluated when client accesses resources on RS. 
+- `Default`: Indicating the default decision  if the attributes of the requester or attibutes of the object does not match with the attibutes in `Rule`. 
+
+### Policy Implementation
+
+Each profile contains a separate policy repository. For example, `paymentPolicy` collection and `healthPolicy` collection. The policy collections can be  accessed and managed through API.  Three http request method are supported: 
   - Get - Get the list of policies.
   - Post - Create new polices.
   - Delete - Delete policies.
-  
-Policies are JSON objects taking the following form:
 
-- `type`: the policy type. `simple-policy`
-- `name`: A string used as an identifier or explanation for the policy.
-- `content`: The content of the policy.
-- `Default`: a `PolicyDecision` object indicating the default decision to be returned if the claims object does not match any of the rules in the policy. 
+Policies are a set of rules which are JSON objects taking the following form: 
 
-The `content` should be JSON object of the following form:
+- `Type`: `"ABAC policy"`.
+- `name`: Name of the policy.
+- `SubjectAttributes`
+- `ObjectAttributes`
+- `Authorization`
+- `Obligation`
+- `EnvironmentContext` 
+- `Default`
 
-- `rules`: an object which maps a number of string rule IDs to rule objects (discussed below).  
-
-A rule object must have the following form:
-
-- `matchAnyOf`: An array of JSON objects. The rule will be activated if any of these objects _match_ the input claims, i.e. all the keys in the object also exist in the claims object and their values match.
-- `decision`: the `PolicyDecision` object to return if the rule matches the claims object. 
-
-- `context` (optional): the external context to be evaluated when client accesses resources on RS. 
-
-A decision object must have the following form:
-
-- `authorization`: Authorizaton decision. 
-- `structuredScope`: The internal context which specifies the authorization conditions associated with the scope. 
-
-The following example shows a sample policy: 
-
-The rule will match any claims object which has a `client_id` key with the value `client2`. If the claims object also satisfies the structuredScope, a decision to `Permit`is returned. 
-
-The context includes "clientlocationclinic", the context information will be included into access token and ESO tokens for RS validation 
+The following examples shows two sample rules. One for health care profile and one for payment profile. 
+#### Health Care Sample Rule
+All Nurse practitioners and doctors in the Cardiology Department can view the Medical Records of Heart Patient when they work at the hospital. 
 
  
 ```json
-{   "type": "simple-policy",
-    "name": "policy2",   
-    "content": {
-            "rules": {
-                "decision": {
-                    "authorization": "Permit",
-                    "structuredScope": {
-                        "resource_set_id": {
-                            "patientId": "1000"
-                        },
-                        "resourceType": [
-                            "Observation",
-                            "Immunization"
-                        ],
-                        "securityLabel": [
-                            "Credential"
-                        ],
-                        "actions": [
-                            "read"
-                        ]
-                    }
-                },
-                "matchAnyOf": [
-                    {
-                        "client_id": "client2"
-                    }
-                ],
-                "context": [
-                    "clientlocationclinic"
-                ]
-            }
-        },
-        "Default": {
-            "authorization": "Deny"
-        },
-    }
+{
+	"type":"ABAC policy",
+	"name":"HeartPatientRecord",
+	"rules":{
+		"SubjectAttribute":{
+			"role":["Doctor","Nurse"],
+			"department":"Cardiology"
+		},
+		"ObjectAttribute":{
+			"resourceType":["Heart"]
+		},
+		"authorization":"permit",
+		"Obligation":{
+			"actions":["view"]
+		},
+		"context":["clientlocationhospital"],
+		"Default":{
+			"authorization":"deny"
+		}
+	}
+}
+```
+
+#### Payment Sample Rule
+Client App A can one time charge $5 ON Alice's checking account for the purpose of using service provided by A. 
+ 
+```json
+{
+	"type":"ABAC policy",
+	"name":"client_A",
+	"rules":{
+		"SubjectAttribute":{
+			"id":"client_A"
+		},
+		"ObjectAttribute":{
+			"owner":"Alice",
+			"account":"Checking"
+		},
+		"authorization":"permit",
+		"Obligation":{
+			"actions":["withdraw"],
+			"amount":"10",
+			"currency":"CAD",
+			"occurance":"1"
+		},
+		"context":[],
+		"Default":{
+			"authorization":"deny"
+		}
+	}
+}
 ```
 
 ### Client Claims
@@ -120,36 +138,21 @@ Below shows an example of the claim token from client:
 
 ```json
 {
-  "issuer": "client2",
-  "client_id": "client2",
-  "structuredScope": {
-    "resource_set_id": {
-      "patientId": "1000"
-    },
-    "resourceType": [
-      "Observation",
-      "Immunization"
-    ],
-    "securityLabel": [
-      "Credential"
-    ],
-    "actions": [
-      "read"
-    ]
-  }
+  "issuer": "Nancy",
+  "client_id": "1000",
+  "ObjectAttribute":{
+			"resourceType":["Heart"]
+		},
+  "structured_scope":{
+			"actions":["view"]
+		},
 }
 ```
 ### Authorization Evaluation 
-AS will first validate all fields in the client request. The client is authenticated by creating jwt using client credentials. Then, the AS decodes the jwt token from the client and evaluates it with all the policies one by one. The evaluation leads to one result of the following for each policy:
-
-- `Permit`: If claim objects matches one of the objects in `matchAnyof` array and requested scope in the claim object satisfies the `structuredScope` in policy.
-- `Deny`: No match found in `matchAnyof` array or claim objects matches one of the objects in `matchAnyof` array but requested scope does not satisfy `structuredScope`.
-- `Not Applicable`: If claim objects matches one of the objects in `matchAnyof` array but requested scope does not satisfy  `structuredScope`.
-
-After evaluating  all the policies, a list of evaluation results will be returned. If there exists at least one `permit`, AS will grant the access and generate an access token. 
+AS will first validate all fields in the client request. The client is authenticated by creating jwt using client credentials. Then, the AS decodes the jwt token from the client and evaluates it with all the policies one by one. Authorization service adopts permit-override strategy. If there exists at least one `permit`, AS will grant the access and generate an access token. 
 
 ### Access Token 
-AS pulls out the relavent information in the policy and embeds them in the token so that RS can verify the token without the need for token introspection. An example of the access token is shown below (after decoding) :
+AS pulls out the relavent information in the policy and embeds them in the token so that RS can verify the token without the need of introspecting the token at AS. An example of the access token is shown below (after decoding) :
 
 ```json
 {
@@ -157,21 +160,12 @@ AS pulls out the relavent information in the policy and embeds them in the token
   "subject": "client1",
   "audience": "http://localhost:4990/patientrecord",
   "issuer": "http://localhost:5000/authorization",
-  "structured_scope": {
-    "resource_set_id": {
-      "patientId": "1001"
-    },
-    "resourceType": [
-      "Observation",
-      "Immunization"
-    ],
-    "securityLabel": [
-      "Normal"
-    ],
-    "actions": [
-      "read"
-    ]
-  },
+  "ObjectAttribute":{
+			"resourceType":["Heart"]
+		},
+  "Obligation":{
+			"actions":["view"]
+		},
   "context": [
     "clientlocationclinic"
   ],
@@ -180,44 +174,10 @@ AS pulls out the relavent information in the policy and embeds them in the token
 ```
 
 ## Resource Server 
-The resource server is implemented as a node.js server, listened on port 4990 in the local computer. The token validation endpoint (api/patientrecord) is implemented at RS side. 
+The resource server is implemented as a node.js server, listened on port 4990 in the local computer. Object attributes are typically bound to their objects through referencing,by embedding them within the object. The resources are stored in RS together with their attributes. Policy enforcement point is implemented in RS. Upon receiving the token from the client, the RS verifies the signature of  the token, validiates the token content and then queries the database. The database returns the appropriate records to RS.  If context validation are required, RS sends an http post request to fetch the internal state of the ESO before releasing the resource to the client. 
 
-### Patient Data 
-The patient data must be grouped by `patienId`, categoried by resourceType  and labelled with securityLabel so that RS understand authorization data in the access token.
-
-This patient data is JSON objects taking the following form:
-
-- `resource_set_id`: An object contains `patientId`.
-- `resourceType`: A string used as the type for policy.
-- `securityLabel`: Normal or Credential. 
-- `content`: The content of the patient data.
-
-The following example shows a sample patient record: 
- 
-```json
- {
-        "resource_set_id": {
-            "patientId": "1001"
-        },
-        "resourceType": [
-            "Observation",
-            "Immunization"
-        ],
-        "securityLabel": [
-            "Normal"
-        ],
-        "content": {
-            "time": "20190722",
-            "allergies": "none",
-            "result": "negative",
-            "nexttreatmenttime": "20190822"
-        }
-    }
-```
-
-### Token Validation 
-
-The RS verifies the signature of  the token, validiates the token content and then queries the database. The database returns the appropriate records to RS.  If context validation are required, RS sends an http post request to fetch the internal state of the ESO before releasing the resource to the client. 
+### Example of Accessing Patient Data
+The RO or admistrator stores the patient data as well as the attributes in RS.  If a client possesses a valid token and required environment conditions are satisfied, RS will release all  the patient records with an attribute of "ResourceType="Heart"". 
 
 
 [//]: # (These are reference links used in the body of this note and get stripped out when the markdown processor does its job. There is no need to format nicely because it shouldn't be seen. Thanks SO - http://stackoverflow.com/questions/4823468/store-comments-in-markdown-syntax)
@@ -249,4 +209,3 @@ The RS verifies the signature of  the token, validiates the token content and th
    [PlGa]: <https://github.com/RahulHP/dillinger/blob/master/plugins/googleanalytics/README.md>
    [Postman]: <https://www.getpostman.com/>
  
-
